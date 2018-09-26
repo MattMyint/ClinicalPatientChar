@@ -2,11 +2,11 @@ library(shiny)
 library(ggplot2)
 
 ## load raw dataset
-df <- read.csv(file = "Patient Clinical Characteristics (No Dup_Trimmed Genetics).csv")
+df <- read.csv(file = "Patient Clinical Characteristics (No Dup_Trimmed Genetics).csv")[,-1]
 
 #### data cleaning ####
 ## remove NA
-df[is.na(df)] <- 0
+#df[is.na(df)] <- 0
 local({
   for(i in c("5h", "6h", "7h", "8h", "9h", "10h", "11h", "13h", "14h")){
     df <<- df[,-grep(i,colnames(df))]
@@ -27,6 +27,7 @@ local({
     df <<- conv_to_factor(df, i)
   }
   df$Subject_ID <<- as.character(df$Subject_ID)
+  df$Age <<- as.numeric(df$Age)
 })
 
 ## identify which columns are classed wrong (skipped since I found alr)
@@ -54,6 +55,8 @@ remove_outliers <- function(x, na.rm = TRUE){
   x
 }
 
+df <- df[df$StatinDose == 40,]
+
 #### Data Visualisation ####
 ## boxplots 
 g.boxplot <- function(x,y,df){
@@ -76,6 +79,8 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       checkboxInput("cobas.only", "Use only data with COBAS results:"),
+      radioButtons("drug.filter", label = NULL, choices = c("ATV", "SIM", "All"),
+                   selected = "All", inline = TRUE),
       wellPanel(
         h4("Boxplot Options"),
         selectInput(inputId = "x.box", label = "X variable", choices = f_groupings),
@@ -93,14 +98,16 @@ ui <- fluidPage(
                selectInput(inputId = "hist.var", label = NULL, choices = type_df$header[type_df$type == "numeric"])),
         column(6,
                checkboxInput("log.trans", "Log-scale"))
-      )
+      ),
+      sliderInput("bins", label = "Number of bins:", min = 20, max = 400, value = 30, step = 10)
     ),
     mainPanel(
       fluidRow(
         column(8,
                plotOutput("boxplot")),
         column(4,
-               htmlOutput("box.compare"))
+               htmlOutput("box.compare"),
+               verbatimTextOutput("cat.sum"))
       ),
       hr(),
       fluidRow(
@@ -117,40 +124,56 @@ ui <- fluidPage(
 
 # Define server logic ----
 server <- function(input, output) {
-  current <- reactiveValues(df = df)
+  current <- reactiveValues(df = df, filter1 = NULL, filter2 = NULL)
   
   observe({
     if(input$cobas.only){
-      current$df <- df[df$COBAS_hsCRP != 0,]
+      current$filter1 <- df[!is.na(df$COBAS_hsCRP),]
     }else{
-      current$df <- df
+      current$filter1 <- df
+    }
+  })
+  
+  observe({
+    if(input$drug.filter == "ATV"){
+      current$filter2 <- current$filter1[current$filter1$StatinType == "Atorvastatin",]
+    }else if(input$drug.filter == "SIM"){
+      current$filter2 <- current$filter1[current$filter1$StatinType == "Simvastatin",]
+    }else if(input$drug.filter == "All"){
+      current$filter2 <- current$filter1
     }
   })
   
   output$hist <- renderPlot({
-    in.hist <- current$df[,input$hist.var]
-    if(input$log.trans){
-      in.hist <- log(in.hist)
-    }
-    hist(in.hist, col = "gray",
-         main = NULL)
+#    in.hist <- current$filter2[,input$hist.var]
+#    if(input$log.trans){
+#      in.hist <- log(in.hist)
+#    }
+#    hist(in.hist, col = "gray",
+#         main = NULL)
+    g <- ggplot(current$filter2, aes_string(input$hist.var)) + geom_freqpoly(bins = input$bins)
+    plot(g)
+  })
+  
+  output$cat.sum <- renderPrint({
+    summary(current$filter2[,input$x.box])
   })
   
   output$boxplot <- renderPlot({
-    g.boxplot(input$x.box, input$y.box, current$df)
+    g.boxplot(input$x.box, input$y.box, current$filter2)
   })
   
   output$box.compare <- renderText({
-    stat_test <- kruskal.test(x = current$df[,input$y.box], g = current$df[,input$x.box])
+    stat_test <- kruskal.test(x = current$filter2[,input$y.box], g = current$filter2[,input$x.box])
     paste(stat_test$method, paste0("p-value: ", round(stat_test$p.value, digits = 4)), sep = "<br>")
   })
   
   output$scatter <- renderPlot({
-    g.scatterplot(input$x.scat, input$y.scat, input$fill.scat, current$df)
+    g.scatterplot(input$x.scat, input$y.scat, input$fill.scat, current$filter2)
   })
   
   output$cor.val <- renderText({
-    cor_test <- cor(current$df[,input$x.scat], current$df[,input$y.scat], method = "spearman")
+    cor_test <- cor(current$filter2[,input$x.scat], current$filter2[,input$y.scat], method = "spearman")
     paste0("r^2 value: ", cor_test)
   })
 }

@@ -1,20 +1,25 @@
 ---
 title: "Statin data"
-output: html_notebook
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
 ---
-
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'h')
+```
 This is the statin dataset. Upon loading the dataset, we wil clean the data by:  
-1) converting NAs to zeroes  
+~~1) converting NAs to zeroes~~ Not advisable as it will skew the results  
 2) removing other timepoint readings except 12h measurements  
-3) convert certain grouping variables to factor classes
+3) convert certain grouping variables to factor classes  
 
-```{r message=FALSE}
+```{r include=FALSE}
+require(ggplot2)
 ## load raw dataset
 df <- read.csv(file = "Patient Clinical Characteristics (No Dup_Trimmed Genetics).csv")
 
 #### data cleaning ####
-## remove NA
-df[is.na(df)] <- 0
 local({
   for(i in c("5h", "6h", "7h", "8h", "9h", "10h", "11h", "13h", "14h")){
     df <<- df[,-grep(i,colnames(df))]
@@ -48,16 +53,25 @@ local({
 })
 type_df <- as.data.frame(type_df)
 f_groupings <- as.character(type_df[type_df$type == "factor",1])
+
+## functions to plot graphs
+g.boxplot <- function(x,y,df){
+  data <- df[,c(x, y)]
+  g <- ggplot(data, aes_string(x, y)) + geom_boxplot(aes_string(fill = x))
+  plot(g)
+}
 ```
 
-```{r}
+```{r echo=FALSE}
 print(as.character(type_df$header[type_df$type == "factor"]))
 ```
-These are the variables we can group our data by. We can see patient demographics, clinical information and SNP genotypes.
+These are the variables we can group our data by. We can see patient demographics, clinical information and SNP genotypes.  
 
-For comparisons involving hsCRP levels (or any other COBAS readings), we will need to subset the data to those that actually had their CRP levels measured. Here are the measurements of the 89 patients.
-```{r}
-w.hsCRP <- df[df$COBAS_hsCRP > 0,]
+***  
+
+For comparisons involving hsCRP levels (or any other COBAS readings), we will need to subset the data to those that actually had their CRP levels measured. Here are the measurements of the 89 patients.  
+```{r echo=FALSE}
+w.hsCRP <- df[!is.na(df$COBAS_hsCRP),]
 qnt <- quantile(w.hsCRP$COBAS_hsCRP, probs = c(0.2,0.8))
 hi.crp <- w.hsCRP[w.hsCRP$COBAS_hsCRP > qnt[[2]],]
 lo.crp <- w.hsCRP[w.hsCRP$COBAS_hsCRP < qnt[[1]],]
@@ -66,28 +80,29 @@ boxplot(w.hsCRP$COBAS_hsCRP, horizontal = TRUE, log = "x")
 summary(w.hsCRP$COBAS_hsCRP)
 ```
 
-**Patient Selection**  
-For the 250 targeted sequencing candidate selection, we will subset out  
+***  
+
+# Patient Selection  
+For the 250 targeted sequencing candidate selection, we will subset out:  
 1) Only patients prescribed a 40 dose (to control for confounding due to varying doses)  
 2) Lower and upper quartiles of patients by drug metabolite level  
 3) Upper quartile of patients by C-reactive Protein level  
 4) Myalgia symptoms (score of 4 or higher)
 
-*Here we've used exclusively patients prescribed atorvastatin, as they made up a larger population and had more reliable data.
+_Here we've used exclusively patients prescribed atorvastatin, as they made up a larger population and had more reliable data._
 
-```{r}
+```{r echo=FALSE}
 ## use patients with dose 40
 dose40_df <- df[df$StatinDose == 40,]
 atv_pat <- dose40_df[dose40_df$StatinType == "Atorvastatin",]
-x20hatv_qnt <- quantile(atv_pat$X2OHATV12h, probs = c(0.25, 0.75))
-x40hatv_qnt <- quantile(atv_pat$X4OHATV12h, probs = c(0.25, 0.75))
-atv_qnt <- quantile(atv_pat$ATVCS12h, probs = c(0.25, 0.75))
-both <- atv_pat[atv_pat$SIMACID12h > 0,c("Subject_ID", "ATVCS12h", "X2OHATV12h", "X4OHATV12h", "SIM12h", "SIMACID12h")]
+x20hatv_qnt <- quantile(atv_pat$X2OHATV12h, probs = c(0.25, 0.75), na.rm = TRUE)
+x40hatv_qnt <- quantile(atv_pat$X4OHATV12h, probs = c(0.25, 0.75), na.rm = TRUE)
+atv_qnt <- quantile(atv_pat$ATVCS12h, probs = c(0.25, 0.75), na.rm = TRUE)
+both <- atv_pat[!is.na(atv_pat$SIMACID12h),c("Subject_ID", "ATVCS12h", "X2OHATV12h", "X4OHATV12h", "SIM12h", "SIMACID12h")]
 ## patients with low drug levels
 low_2ohatv <- atv_pat[atv_pat$X2OHATV12h <= x20hatv_qnt[[1]],]
 low_4ohatv <- atv_pat[atv_pat$X4OHATV12h <= x40hatv_qnt[[1]],]
 low_atv <- atv_pat[atv_pat$ATVCS12h <= atv_qnt[[1]],]
-length(low_2ohatv$Subject_ID[low_2ohatv$Subject_ID == low_4ohatv$Subject_ID])
 low_20h_4oh <- intersect(low_4ohatv$Subject_ID, low_2ohatv$Subject_ID)
 low_20h_atv <- intersect(low_2ohatv$Subject_ID, low_atv$Subject_ID)
 low_40h_atv <- intersect(low_4ohatv$Subject_ID, low_atv$Subject_ID)
@@ -102,8 +117,154 @@ nrow(low_atv_total)
 print(both)
 ```
 
-![Each group yielded 157 subjects, with high overlap. 130 subjects were identified with low measurements for atorvastatin and its metabolites](Venn_2set_simple.png)
 
-As we can see, there are 626 patients prescribed a 40mg dose of atorvastatin, of which 130 are in the bottom quantile in measurements for plasma levels of atorvastatin and its metabolites. Also of note is that four subjects were identified to have readings for simvastatin, with one of them missing values for atorvastatin. This is likely a data entry error.
+```{r echo=FALSE}
+knitr::include_graphics("Venn_2set_simple.png")
+```
 
+
+As we can see, there are 626 patients prescribed a 40mg dose of atorvastatin, of which 130 are in the bottom quantile in measurements for plasma levels of atorvastatin and its metabolites. Also of note is that four subjects were identified to have readings for simvastatin, with one of them missing values for atorvastatin. This is likely a data entry error.  
+
+***  
+
+# Phenotype-Genotype Associations  
+Controlling for dose by choosing only patients with 40mg dose of atorvastatin, we can compare CK levels, statin levels and such to subject genotypes.
+```{r}
+length(atv_pat$Subject_ID[atv_pat$Myalgia_Score != 0])
+```
+Unfortunately, only 47 patients have myalgia scores so comparisons made using this variable should be interpreted cautiously.
+
+
+### Comparison of Myalgia score and genotype  
+```{r}
+mt <- table(atv_pat[,c("Myalgia_Score", "POR_rs1057868")])
+ftable(mt)
+fisher.test(mt)
+```
+The differences are just barely significant
+
+### Comparison of Myalgia and metabolite ratios  
+Somehow, there is a significant difference in the log ratio of 2OHATV/ATV between subjects identified with myalgia and those without.  
+```{r  echo=FALSE}
+g.boxplot("Myalgia", "lgRatio2OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio2OHATVATV12h, g = atv_pat$Myalgia)
+summary(atv_pat$Myalgia)
+```
+
+
+### Comparing CK levels by genotype  
+Here we need to subset only subjects that have COBAS data, leaving us with 66 subjects.
+```{r echo=FALSE}
+atv.cobas <- atv_pat[!is.na(atv_pat$COBAS_hsCRP),]
+nrow(atv.cobas)
+g.boxplot("COQ2_rs6535454", "COBAS_CK", atv.cobas)
+kruskal.test(x = atv.cobas$COBAS_CK, g = atv.cobas$COQ2_rs6535454)
+summary(atv.cobas$COQ2_rs6535454)
+```
+
+```{r echo=FALSE}
+g.boxplot("COQ2_rs4693075", "COBAS_CK", atv.cobas)
+kruskal.test(x = atv.cobas$COBAS_CK, g = atv.cobas$COQ2_rs4693075)
+summary(atv.cobas$COQ2_rs4693075)
+```  
+
+
+### Comparing statin levels by genotype  
+```{r echo=FALSE}
+g.boxplot("COQ2_rs6535454", "lgRatio4OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio4OHATVATV12h, g = atv_pat$COQ2_rs6535454)
+summary(atv_pat$COQ2_rs6535454)
+```
+
+```{r echo=FALSE}
+g.boxplot("COQ2_rs4693075", "lgRatio4OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio4OHATVATV12h, g = atv_pat$COQ2_rs4693075)
+summary(atv_pat$COQ2_rs4693075)
+```
+
+```{r echo=FALSE}
+g.boxplot("APOA5_rs662799", "lgATVCS12h", atv_pat)
+kruskal.test(x = atv_pat$lgATVCS12h, g = atv_pat$APOA5_rs662799)
+summary(atv_pat$APOA5_rs662799)
+```
+
+```{r echo=FALSE}
+g.boxplot("APOA5_rs662799", "lg2OHATV12h", atv_pat)
+kruskal.test(x = atv_pat$lg2OHATV12h, g = atv_pat$APOA5_rs662799)
+summary(atv_pat$APOA5_rs662799)
+```
+
+```{r echo=FALSE}
+g.boxplot("APOA5_rs662799", "lg2OHATVLAC12h", atv_pat)
+kruskal.test(x = atv_pat$lg2OHATVLAC12h, g = atv_pat$APOA5_rs662799)
+summary(atv_pat$APOA5_rs662799)
+```
+
+```{r echo=FALSE}
+g.boxplot("UGT1A1_rs4148323", "lg2OHATV12h", atv_pat)
+kruskal.test(x = atv_pat$lg2OHATV12h, g = atv_pat$UGT1A1_rs4148323)
+summary(atv_pat$UGT1A1_rs4148323)
+```
+
+```{r echo=FALSE}
+g.boxplot("UGT1A1_rs4148323", "lgRatioLACATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatioLACATV12h, g = atv_pat$UGT1A1_rs4148323)
+summary(atv_pat$UGT1A1_rs4148323)
+```
+
+```{r echo=FALSE}
+g.boxplot("UGT1A1_rs4148323", "lg2OHATVLAC12h", atv_pat)
+kruskal.test(x = atv_pat$lg2OHATVLAC12h, g = atv_pat$UGT1A1_rs4148323)
+summary(atv_pat$UGT1A1_rs4148323)
+```
+
+```{r echo=FALSE}
+g.boxplot("UGT1A1_rs4148323", "lgRatio2OHLACLAC12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio2OHLACLAC12h, g = atv_pat$UGT1A1_rs4148323)
+summary(atv_pat$UGT1A1_rs4148323)
+```
+
+```{r echo=FALSE}
+g.boxplot("SLCO1B1_rs4149056", "lg4OHATV12h", atv_pat)
+kruskal.test(x = atv_pat$lg4OHATV12h, g = atv_pat$SLCO1B1_rs4149056)
+summary(atv_pat$SLCO1B1_rs4149056)
+```
+
+```{r echo=FALSE}
+g.boxplot("SLCO1B1_rs4149056", "lg4OHATVLAC12h", atv_pat)
+kruskal.test(x = atv_pat$lg4OHATVLAC12h, g = atv_pat$SLCO1B1_rs4149056)
+summary(atv_pat$SLCO1B1_rs4149056)
+```
+
+```{r echo=FALSE}
+g.boxplot("CETP_rs708272", "lg4OHATVLAC12h", atv_pat)
+kruskal.test(x = atv_pat$lg4OHATVLAC12h, g = atv_pat$CETP_rs708272)
+summary(atv_pat$CETP_rs708272)
+```
+
+```{r echo=FALSE}
+g.boxplot("CYP3A4_rs2242480", "lgRatio2OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio2OHATVATV12h, g = atv_pat$CYP3A4_rs2242480)
+summary(atv_pat$CYP3A4_rs2242480)
+```
+
+```{r echo=FALSE}
+g.boxplot("CYP3A4_rs2242480", "lgRatio4OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio4OHATVATV12h, g = atv_pat$CYP3A4_rs2242480)
+summary(atv_pat$CYP3A4_rs2242480)
+```
+
+```{r echo=FALSE}
+g.boxplot("CYP3A5_rs15524", "lgRatio4OHATVATV12h", atv_pat)
+kruskal.test(x = atv_pat$lgRatio4OHATVATV12h, g = atv_pat$CYP3A5_rs15524)
+summary(atv_pat$CYP3A5_rs15524)
+```
+
+# Creating sample set based on myalgia score  
+Cases in this sample are defined as patients with reported myalgia score 4 or higher, of which there are 45.
+```{r}
+myalgia_pat <- df$Subject_ID[df$Myalgia_Score == 4 | df$Myalgia_Score == 5 | df$Myalgia_Score == 6]
+myalgia_pat <- myalgia_pat[!is.na(myalgia_pat)]
+length(myalgia_pat)
+```
 

@@ -1,0 +1,183 @@
+---
+title: "Patient Selection"
+output: pdf_document
+fontsize : 12pt
+---
+This notebook is to select 245 samples for targeted sequencing, from a population of 1363 patient samples.  
+The sample will consist of 45 myalgia cases, 100 low ATV controls and 100 high ATV controls.  
+```{r include=FALSE}
+require(ggplot2)
+## load raw dataset
+df <- read.csv(file = "Patient Clinical Characteristics (No Dup_Trimmed Genetics).csv")
+
+#### data cleaning ####
+local({
+  for(i in c("5h", "6h", "7h", "8h", "9h", "10h", "11h", "13h", "14h")){
+    df <<- df[,-grep(i,colnames(df))]
+  }
+})
+local({
+  to_convert <- c("Site_Code", "GenderCode", "BMICode", "RaceCode", "StatinCode", 
+                  "StatinDoseCode", "MI", "Renal_Problems", "Liver_Problems", "Hypertension", 
+                  "Diabetes_Mellitus", "Hypercholesterolemia", "Myalgia", "Myalgia_Score", "Blood_Thinner",
+                  "Glucose_lowering", "Cholesterol_Lowering", "Heart_protective", "BP_lowering")
+  conv_to_factor <- function(datafram, c){
+    datafram[, c] <- as.factor(datafram[, c])
+    return(datafram)
+  }
+  for(i in to_convert){
+    df <<- conv_to_factor(df, i)
+  }
+  df$Subject_ID <<- as.character(df$Subject_ID)
+})
+
+## functions to plot graphs
+g.boxplot <- function(x,y,df){
+  data <- df[,c(x, y)]
+  g <- ggplot(data, aes_string(x, y)) + geom_boxplot(aes_string(fill = x))
+  plot(g)
+}
+```
+# Defining our cases
+Here we select patients whose myalgia score was 4 or higher, obtaining 45 subjects as cases.
+```{r, collapse=TRUE}
+myalgia_pat <- df$Subject_ID[df$Myalgia_Score == 4 | df$Myalgia_Score == 5
+                             | df$Myalgia_Score == 6]
+myalgia_pat <- myalgia_pat[!is.na(myalgia_pat)]
+myalgia <- df[df$Subject_ID %in% myalgia_pat,]
+nrow(myalgia)
+```
+We'll also create a separate table of control subject candidates. and get the lgATVCS12h values corresponding to the lower and upper quartiles.   
+Then, we can check that the distribution of the two quartiles put together becomes bimodal.  
+```{r}
+myalgia_ctrl <- df$Subject_ID[df$Myalgia_Score == 0 | df$Myalgia_Score == 2
+                              | df$Myalgia_Score == 3]
+myalgia_ctrl <- myalgia_ctrl[!is.na(myalgia_ctrl)]
+myalgia_ctrl <- df[df$Subject_ID %in% myalgia_ctrl,]
+qnt <- quantile(myalgia_ctrl$lgATVCS12h, probs = c(0.25, 0.75), na.rm = TRUE)
+hist(myalgia_ctrl[(myalgia_ctrl$lgATVCS12h <= qnt[1] 
+                   | myalgia_ctrl$lgATVCS12h >= qnt[2]) 
+                  & !is.na(myalgia_ctrl$lgATVCS12h), "lgATVCS12h"])
+```
+
+Now we can examine how many patients fall under these quartiles and see if we need to sample from these groups. As we will be using random sampling, it helps to set a seed so if we find a good sample set we can note it and replicate the results.  
+```{r}
+bot.atv <- myalgia_ctrl[myalgia_ctrl$lgATVCS12h <= qnt[1] 
+                        & !is.na(myalgia_ctrl$lgATVCS12h),]
+top.atv <- myalgia_ctrl[myalgia_ctrl$lgATVCS12h >= qnt[2] 
+                        & !is.na(myalgia_ctrl$lgATVCS12h),]
+cat(paste0("Bottom 25%: ", nrow(bot.atv), "\t", "Top 25%: ", nrow(top.atv)))
+set.seed(100)
+s.b <- bot.atv[bot.atv$Subject_ID %in% sample(bot.atv$Subject_ID, 100),]
+s.t <- top.atv[top.atv$Subject_ID %in% sample(top.atv$Subject_ID, 100),]
+
+## manually swap out one erronous subject
+s.b <- s.b[s.b$Subject_ID != "S0882",]
+s.b <- rbind(s.b, bot.atv[bot.atv$Subject_ID == "S0857",])
+```
+
+***
+Let's compare the lgATVCS12h scores of our three groups (cases, high atv controls, low atv controls)
+```{r}
+t.test(myalgia$lgATVCS12h, y = s.b$lgATVCS12h)
+t.test(myalgia$lgATVCS12h, y = s.t$lgATVCS12h)
+t.test(s.b$lgATVCS12h, y = s.t$lgATVCS12h)
+```
+
+Now we can pool our three groups together and see if there's any stratification by other factors
+```{r}
+test.sample <- rbind(df[df$Subject_ID %in% myalgia_pat,], s.b, s.t)
+test.sample$group <- factor(x = c(rep("myalgia", 45), rep(c("low", "high"), each = 100)),
+                            levels = c("myalgia", "low", "high"))
+ctrls <- rbind(s.b, s.t)
+ctrls$group <- factor(x = rep(c("low", "high"), each = 100), levels = c("low", "high"))
+```
+
+***
+
+## Race
+### Comparing all three groups together
+```{r}
+mt <- table(test.sample[,c("Race", "group")])
+ftable(mt)
+fisher.test(mt)
+```
+
+### Comparing just control groups
+```{r}
+ct <- table(ctrls[,c("Race", "group")])
+ftable(ct)
+fisher.test(ct)
+```
+
+***
+
+## Gender
+### Comparing all three groups together
+```{r}
+mt <- table(test.sample[,c("Gender", "group")])
+ftable(mt)
+fisher.test(mt)
+```
+
+### Comparing just control groups
+```{r}
+ct <- table(ctrls[,c("Gender", "group")])
+ftable(ct)
+fisher.test(ct)
+```
+
+***
+
+## Age
+### Comparing all three groups together
+```{r}
+kruskal.test(x = test.sample$Age, g = test.sample$group)
+g.boxplot("group", "Age", test.sample)
+print("Cases summary")
+summary(test.sample$Age[test.sample$group == "myalgia"])
+print("Low ATV summary")
+summary(test.sample$Age[test.sample$group == "low"])
+print("High ATV summary")
+summary(test.sample$Age[test.sample$group == "high"])
+```
+
+### Comparing just control groups
+```{r}
+kruskal.test(x = ctrls$Age, g = ctrls$group)
+g.boxplot("group", "Age", ctrls)
+```
+
+***
+
+We can check the underlying distribution of our top and bottom quartiles just in case
+### Race
+```{r}
+whole_qrts <- rbind(bot.atv, top.atv)
+whole_qrts$group <- factor(x = rep(c("bottom", "top"), each = 175), levels = c("bottom", "top"))
+qt <- table(whole_qrts[,c("Race", "group")])
+ftable(qt)
+fisher.test(qt)
+```
+
+### Gender
+```{r}
+qt <- table(whole_qrts[,c("Gender", "group")])
+ftable(qt)
+fisher.test(qt)
+```
+
+### Age
+```{r}
+kruskal.test(x = whole_qrts$Age, g = whole_qrts$group)
+g.boxplot("group", "Age", whole_qrts)
+summary(bot.atv$Age)
+summary(top.atv$Age)
+```
+
+It should be noted that age significantly differs between the two groups. However, the difference in medians is only 2.5 years.  
+***
+```{r eval=FALSE}
+write.csv(test.sample, file = "target_seq_candidates.csv")
+```
+
